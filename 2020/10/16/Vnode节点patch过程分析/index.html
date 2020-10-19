@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 4.2.1">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"movechip.github.io","root":"/","scheme":"Gemini","version":"8.0.0-rc.2","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":true,"show_result":true,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}}};
+  </script>
+
+  <meta name="description" content="在分析前首先提出几个问题： 什么时候、在哪里进行 Vnode 节点的 patch ? patch 过程主要做了什么？ Vnode 节点如何进行新旧节点的比对、更新？">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Vnode节点patch过程分析">
+<meta property="og:url" content="https://movechip.github.io/2020/10/16/Vnode%E8%8A%82%E7%82%B9patch%E8%BF%87%E7%A8%8B%E5%88%86%E6%9E%90/index.html">
+<meta property="og:site_name" content="Movechip">
+<meta property="og:description" content="在分析前首先提出几个问题： 什么时候、在哪里进行 Vnode 节点的 patch ? patch 过程主要做了什么？ Vnode 节点如何进行新旧节点的比对、更新？">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://movechip.github.io/images/vnode-patch.png">
+<meta property="article:published_time" content="2020-10-16T10:10:50.988Z">
+<meta property="article:modified_time" content="2020-10-19T06:56:10.417Z">
+<meta property="article:author" content="movechip">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://movechip.github.io/images/vnode-patch.png">
+
+<link rel="canonical" href="https://movechip.github.io/2020/10/16/Vnode%E8%8A%82%E7%82%B9patch%E8%BF%87%E7%A8%8B%E5%88%86%E6%9E%90/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>Vnode节点patch过程分析 | Movechip</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+        <span class="toggle-line toggle-line-first"></span>
+        <span class="toggle-line toggle-line-middle"></span>
+        <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Movechip</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+    </div>
+  </div>
+</div>
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类<span class="badge">3</span></a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档<span class="badge">4</span></a>
+
+  </li>
+  </ul>
+</nav>
+
+
+
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://movechip.github.io/2020/10/16/Vnode%E8%8A%82%E7%82%B9patch%E8%BF%87%E7%A8%8B%E5%88%86%E6%9E%90/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="movechip">
+      <meta itemprop="description" content="">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Movechip">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Vnode节点patch过程分析
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2020-10-16 18:10:50" itemprop="dateCreated datePublished" datetime="2020-10-16T18:10:50+08:00">2020-10-16</time>
+            </span>
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="far fa-calendar-check"></i>
+                </span>
+                <span class="post-meta-item-text">更新于</span>
+                <time title="修改时间：2020-10-19 14:56:10" itemprop="dateModified" datetime="2020-10-19T14:56:10+08:00">2020-10-19</time>
+              </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/Vue/" itemprop="url" rel="index"><span itemprop="name">Vue</span></a>
+                </span>
+            </span>
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="在分析前首先提出几个问题："><a href="#在分析前首先提出几个问题：" class="headerlink" title="在分析前首先提出几个问题："></a>在分析前首先提出几个问题：</h2><ul>
+<li>什么时候、在哪里进行 Vnode 节点的 patch ?</li>
+<li>patch 过程主要做了什么？</li>
+<li>Vnode 节点如何进行新旧节点的比对、更新？<a id="more"></a>
+
+
+</li>
+</ul>
+<blockquote>
+<p>基于 Vue.js v2.6.10 进行分析</p>
+</blockquote>
+<h2 id="patch-方法什么时候、在什么地方调用？"><a href="#patch-方法什么时候、在什么地方调用？" class="headerlink" title="patch 方法什么时候、在什么地方调用？"></a>patch 方法什么时候、在什么地方调用？</h2><p>组件挂载和更新时会调用 <code>updateComponent</code> 方法，<code>updateComponent</code> 中会调用组件实例上的 <code>_update</code> 方法，<code>_update</code> 方法中会对组件实例上的 <code>__patch__</code> 方法进行调用。<code>_update</code> 的第一个参数为调用组件实例 <code>render</code> 方法生成的新的 <code>Vnode</code> 节点，在 <code>_update</code> 方法内，可以通过组件实例获取当前的（旧） <code>Vnode</code> 节点, 如果旧 <code>Vnode</code> 节点不存在，则说明为初始渲染，那么 <code>__patch__</code> 方法的第一个参数就是组件实例 <code>$el</code> 属性绑定的元素，否则为旧的 <code>Vnode</code> <code>节点，__patch__</code> 的第二个参数为新的 <code>Vnode</code> 节点。而 <code>__patch__</code> 方法是 <code>patch</code> 方法的别名。</p>
+<h2 id="patch-方法主要做了什么？"><a href="#patch-方法主要做了什么？" class="headerlink" title="patch 方法主要做了什么？"></a>patch 方法主要做了什么？</h2><p><code>patch</code> 方法通过对 <code>vnode</code> <code>oldVnode</code> 进行判断来执行不同的操作：</p>
+<ul>
+<li><code>oldVnode</code> 不存在, 根据 <code>vnode</code> 创建 <code>dom</code> 元素</li>
+<li><code>oldVnode</code> 为 <code>dom</code> 元素或与 <code>vnode</code> 不为 <code>sameVnode</code>，则销毁 <code>oldVnode</code>，根据 <code>vnode</code> 生成 <code>dom</code> 元素 </li>
+<li><code>oldVnode</code> <code>vnode</code> 为 <code>sameVnode</code> 且 <code>oldVnode</code> 不为 <code>dom</code> 元素, 则执行 <code>patchVnode</code> 方法</li>
+</ul>
+<h3 id="patch-方法源码分析如下："><a href="#patch-方法源码分析如下：" class="headerlink" title="patch 方法源码分析如下："></a><code>patch</code> 方法源码分析如下：</h3><ol>
+<li>首选判断 <code>vnode</code> 节点是否存在，如果不存在 <code>vnode</code> 节点 ，说明需要销毁当前 <code>oldVnode</code> 节点，然后退出 <code>patch</code> 过程<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (isUndef(vnode)) &#123;</span><br><span class="line">  <span class="keyword">if</span> (isDef(oldVnode)) &#123; invokeDestroyHook(oldVnode); &#125;</span><br><span class="line">  <span class="keyword">return</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>然后判断 <code>oldVnode</code> 是否存在, 如果 <code>oldVnode</code> 不存在，说明是初始 <code>patch</code>，则根据 <code>vnode</code> 生成相应的元素，最后返回生成的元素退出 <code>patch</code> 过程<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (isUndef(oldVnode)) &#123;</span><br><span class="line">  <span class="comment">// empty mount (likely as component), create new root element</span></span><br><span class="line">  isInitialPatch = <span class="literal">true</span></span><br><span class="line">  createElm(vnode, insertedVnodeQueue)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">invokeInsertHook(vnode, insertedVnodeQueue, isInitialPatch)</span><br><span class="line"><span class="keyword">return</span> vnode.elm</span><br></pre></td></tr></table></figure></li>
+<li>如果 <code>oldVnode</code> 存在, 在 <code>oldVnode</code> 不为 <code>dom</code> 元素且与 <code>sameVnode(oldVnode, vnode)</code> 返回真的情况下，执行 <code>patchVnode</code> 方法<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!isRealElement &amp;&amp; sameVnode(oldVnode, vnode)) &#123;</span><br><span class="line">  <span class="comment">// patch existing root node</span></span><br><span class="line">  patchVnode(oldVnode, vnode, insertedVnodeQueue, <span class="literal">null</span>, <span class="literal">null</span>, removeOnly)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>如果第三步为假，则根据 <code>vnode</code> 生成相应的元素，并删除 <code>oldVnode</code>，然后退出 <code>patch</code> 过程</li>
+</ol>
+<h3 id="什么情况下两个-vnode-节点是-sameVnode"><a href="#什么情况下两个-vnode-节点是-sameVnode" class="headerlink" title="什么情况下两个 vnode 节点是 sameVnode ?"></a>什么情况下两个 <code>vnode</code> 节点是 <code>sameVnode</code> ?</h3><p>基本要求：两个节点的 <code>key</code> 相同，如果两个 <code>vnode</code> 节点的 <code>key</code> 都为 <code>undefined</code>，则条件也成立</p>
+<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">return</span> (</span><br><span class="line">  a.key === b.key &amp;&amp; (</span><br><span class="line">    (</span><br><span class="line">      a.tag === b.tag &amp;&amp;</span><br><span class="line">      a.isComment === b.isComment &amp;&amp;</span><br><span class="line">      isDef(a.data) === isDef(b.data) &amp;&amp;</span><br><span class="line">      sameInputType(a, b)</span><br><span class="line">    ) || (</span><br><span class="line">      isTrue(a.isAsyncPlaceholder) &amp;&amp;</span><br><span class="line">      a.asyncFactory === b.asyncFactory &amp;&amp;</span><br><span class="line">      isUndef(b.asyncFactory.error)</span><br><span class="line">    )</span><br><span class="line">  )</span><br><span class="line">)</span><br></pre></td></tr></table></figure>
+
+<h2 id="Vnode-是如何进行新老节点比对、更新的？"><a href="#Vnode-是如何进行新老节点比对、更新的？" class="headerlink" title="Vnode 是如何进行新老节点比对、更新的？"></a>Vnode 是如何进行新老节点比对、更新的？</h2><ul>
+<li>通过 <code>patchVnode</code> 进行新，旧节点比对、更新</li>
+<li>通过 <code>updateChildren</code> 进行新旧节点的子节点的比对、更新</li>
+</ul>
+<h3 id="patchVnode-方法中主要做了如下操作："><a href="#patchVnode-方法中主要做了如下操作：" class="headerlink" title="patchVnode 方法中主要做了如下操作："></a>patchVnode 方法中主要做了如下操作：</h3><ul>
+<li>如果 <code>oldVnode</code> === <code>vnode</code>, 节点没有变化，直接返回<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (oldVnode === vnode) &#123;</span><br><span class="line">  <span class="keyword">return</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>如果是 <code>oldVnode</code> <code>vnode</code> 都为静态节点、<code>key</code> 相同、<code>vnode</code> 的 <code>isCloned</code> 为真或 <code>vnode.isOnce</code> 为真，则 <code>vnode</code> 直接从 <code>oldVnode</code> 中获取 <code>componentInstance</code>, 然后返回<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (isTrue(vnode.isStatic) &amp;&amp;</span><br><span class="line">  isTrue(oldVnode.isStatic) &amp;&amp;</span><br><span class="line">  vnode.key === oldVnode.key &amp;&amp;</span><br><span class="line">  (isTrue(vnode.isCloned) || isTrue(vnode.isOnce))</span><br><span class="line">) &#123;</span><br><span class="line">  vnode.componentInstance = oldVnode.componentInstance</span><br><span class="line">  <span class="keyword">return</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li>如果 <code>vnode.text</code> 未定义：<ul>
+<li><code>oldVnode.children</code> 和 <code>vnode.children</code> 存在且不相同，则调用 <code>updateChildren</code> 方法进行子节点的比对<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (oldCh !== ch) updateChildren(elm, oldCh, ch, insertedVnodeQueue, removeOnly)</span><br></pre></td></tr></table></figure></li>
+<li><code>vnode.children</code> 存在，执行添加子节点操作<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">addVnodes(elm, <span class="literal">null</span>, ch, <span class="number">0</span>, ch.length - <span class="number">1</span>, insertedVnodeQueue)</span><br></pre></td></tr></table></figure></li>
+<li><code>oldVnode.children</code> 存在，执行删除子节点操作<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">removeVnodes(elm, oldCh, <span class="number">0</span>, oldCh.length - <span class="number">1</span>)</span><br></pre></td></tr></table></figure></li>
+</ul>
+</li>
+<li>如果 <code>oldVnode.text</code> 与 <code>vnode.text</code> 不相同，则更新为 <code>vnode.text</code><figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (oldVnode.text !== vnode.text) &#123;</span><br><span class="line">      nodeOps.setTextContent(elm, vnode.text)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+</li>
+</ul>
+<h3 id="updateChildren-方法内做了如下操作："><a href="#updateChildren-方法内做了如下操作：" class="headerlink" title="updateChildren 方法内做了如下操作："></a>updateChildren 方法内做了如下操作：</h3><p>首先定义四个索引变量标记新旧子节点数组(<code>ch</code>、<code>oldCh</code>)的首尾，后面使用这些索引在子节点数组中移动进行子节点的比对</p>
+<ul>
+<li><code>oldStartIdx</code> <code>newStartIdx</code> 分别标记 <code>ch</code>、<code>oldCh</code> 的首节点</li>
+<li><code>oldEndIdx</code> <code>newEndIdx</code> 分别标记 <code>ch</code>、<code>oldCh</code> 的尾节点</li>
+</ul>
+<p>然后在一个循环中根据不同的情况对索引进行移动，当新子节点或旧子节点的首尾索引相遇时说明子节点已被比对完毕，此时应中止循环</p>
+<figure class="highlight js"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">while</span> (oldStartIdx &lt;= oldEndIdx &amp;&amp; newStartIdx &lt;= newEndIdx)</span><br></pre></td></tr></table></figure>
+<p>循环中止后，有如下情况需要判断：</p>
+<ul>
+<li>如果是 <code>oldStartIdx</code> &gt; <code>oldEndIdx</code> 导致循环中止，说明  <code>newStartIdx</code> 与 <code>newEndIdx</code> 之间的节点是新添加的，所以需要把它们添加到父节点中</li>
+<li>如果是 <code>newStartIdx</code> &gt; <code>newEndIdx</code> 导致循环中止，说明  <code>oldStartIdx</code> 与 <code>oldEndIdx</code> 之间的节点被删除，所以需要从父节点中删除它们</li>
+</ul>
+<h3 id="接下来就是-updateChildren-进行子节点比对的核心逻辑了："><a href="#接下来就是-updateChildren-进行子节点比对的核心逻辑了：" class="headerlink" title="接下来就是 updateChildren 进行子节点比对的核心逻辑了："></a>接下来就是 updateChildren 进行子节点比对的核心逻辑了：</h3><p><img src="/images/vnode-patch.png" alt="vnode patch"></p>
+<ul>
+<li><p><code>newStartNode</code> 与 <code>oldStartNode</code> 比对</p>
+<ul>
+<li>如果为 <code>sameVnode</code>，则调用 <code>patchVnode</code> 方法，最后 <code>oldStartIdx</code> <code>newStartIdx</code> 向右移动</li>
+</ul>
+</li>
+<li><p><code>newEndNode</code> 与 <code>oldEndNode</code> 比对</p>
+<ul>
+<li>如果为 <code>sameVnode</code>，则调用 <code>patchVnode</code> 方法，最后 <code>oldEndIdx</code> <code>newEndIdx</code> 向左移动</li>
+</ul>
+</li>
+<li><p><code>newEndNode</code> 与 <code>oldStartNode</code> 比对</p>
+<ul>
+<li>如果为 <code>sameVnode</code>，则调用 <code>patchVnode</code> 方法，然后把 <code>oldStartIdx</code> 标识的节点移动到 <code>oldEndIdx</code> 标识的节点的后面，最后 <code>oldStartIdx</code> 向右移动，<code>newEndIdx</code> 向左移动</li>
+</ul>
+</li>
+<li><p><code>newStartNode</code> 与 <code>oldEndNode</code> 比对</p>
+<ul>
+<li>如果为 <code>sameVnode</code>，则调用 <code>patchVnode</code> 方法，然后把 <code>oldEndIdx</code> 标识的节点移动到 <code>oldStartIdx</code> 标识的节点的前面，最后 <code>newStartIdx</code> <code>向右移动，oldEndIdx</code> 向左移动</li>
+</ul>
+</li>
+<li><p>上面的条件都不成立</p>
+</li>
+</ul>
+<ul>
+<li>创建 <code>oldCh</code> 中子节点的 <code>key</code> 与 子节点的在 <code>oldCh</code> 中的索引的映射，查询 <code>newStartIdx</code> 指向的 <code>vnode</code> 节点的 <code>key</code> 是否与映射中的 <code>key</code> 存在相同的情况，如果不存在则根据 <code>newStartIdx</code> 指向的 <code>vnode</code> 创建 <code>dom</code> 元素并插入到 <code>oldStartIdx</code> 指向的 <code>vnode</code> 节点的 <code>dom</code> 元素的前面 ; 如果存在且与映射中找到的节点为 <code>sameVnode</code>, 则把找到的节点移动到 <code>oldStartIdx</code> 指向的节点的前面，并把找到的节点在映射中置为 <code>undefined</code>，防止后面重复匹配，否则根据 <code>newStartIdx</code> 指向的 <code>vnode</code> 创建 <code>dom</code> 元素并插入到 <code>oldStartIdx</code> 指向的 <code>vnode</code> 节点的 <code>dom</code> 元素的前面</li>
+</ul>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>movechip
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://movechip.github.io/2020/10/16/Vnode%E8%8A%82%E7%82%B9patch%E8%BF%87%E7%A8%8B%E5%88%86%E6%9E%90/" title="Vnode节点patch过程分析">https://movechip.github.io/2020/10/16/Vnode节点patch过程分析/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-ND</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2020/10/13/%E8%A7%82%E5%AF%9F%E8%80%85%E6%A8%A1%E5%BC%8F%E4%B8%8E%E5%8F%91%E5%B8%83%E8%AE%A2%E9%98%85%E6%A8%A1%E5%BC%8F/" rel="prev" title="观察者模式与发布订阅模式">
+      <i class="fa fa-chevron-left"></i> 观察者模式与发布订阅模式
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#在分析前首先提出几个问题："><span class="nav-number">1.</span> <span class="nav-text">在分析前首先提出几个问题：</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#patch-方法什么时候、在什么地方调用？"><span class="nav-number">2.</span> <span class="nav-text">patch 方法什么时候、在什么地方调用？</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#patch-方法主要做了什么？"><span class="nav-number">3.</span> <span class="nav-text">patch 方法主要做了什么？</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#patch-方法源码分析如下："><span class="nav-number">3.1.</span> <span class="nav-text">patch 方法源码分析如下：</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#什么情况下两个-vnode-节点是-sameVnode"><span class="nav-number">3.2.</span> <span class="nav-text">什么情况下两个 vnode 节点是 sameVnode ?</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Vnode-是如何进行新老节点比对、更新的？"><span class="nav-number">4.</span> <span class="nav-text">Vnode 是如何进行新老节点比对、更新的？</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#patchVnode-方法中主要做了如下操作："><span class="nav-number">4.1.</span> <span class="nav-text">patchVnode 方法中主要做了如下操作：</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#updateChildren-方法内做了如下操作："><span class="nav-number">4.2.</span> <span class="nav-text">updateChildren 方法内做了如下操作：</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#接下来就是-updateChildren-进行子节点比对的核心逻辑了："><span class="nav-number">4.3.</span> <span class="nav-text">接下来就是 updateChildren 进行子节点比对的核心逻辑了：</span></a></li></ol></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">movechip</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">4</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+          
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-nd.svg" alt="Creative Commons"></a>
+  </div>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2020</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">movechip</span>
+</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+</body>
+</html>
